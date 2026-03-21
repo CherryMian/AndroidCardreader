@@ -131,7 +131,12 @@ class MainActivity : ComponentActivity() {
                     },
                     onFailure = {
                         Log.e(logTag, "Read failed", it)
-                        uiState = CardUiState.Error(it.message ?: "读取失败")
+                        val errorMsg = if (it.message?.contains("Tag was lost", ignoreCase = true) == true) {
+                            "请不要移动的太快，请保持3-5秒来确保卡片正确读取"
+                        } else {
+                            it.message ?: "读取失败"
+                        }
+                        uiState = CardUiState.Error(errorMsg)
                     }
                 )
             }
