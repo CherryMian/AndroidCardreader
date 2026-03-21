@@ -132,7 +132,7 @@ class MainActivity : ComponentActivity() {
                     onFailure = {
                         Log.e(logTag, "Read failed", it)
                         val errorMsg = if (it.message?.contains("Tag was lost", ignoreCase = true) == true) {
-                            "请不要移动的太快，请保持3-5秒来确保卡片正确读取"
+                            "请不要移动的太快"
                         } else {
                             it.message ?: "读取失败"
                         }
@@ -177,8 +177,26 @@ class MainActivity : ComponentActivity() {
         val aid = emvCard.aid ?: ""
         val standard = if (aid.startsWith("A000000333")) "PBOC" else "EMV"
 
+        // improved type detection
+        val cardType = if (aid == "A0000000108888") {
+            "Mastercard China"
+        } else {
+            emvCard.type?.toString() ?: run {
+                val label = emvCard.applicationLabel?.lowercase(java.util.Locale.US)
+                when {
+                    label?.contains("mastercard") == true -> "MasterCard"
+                    label?.contains("visa") == true -> "Visa"
+                    label?.contains("unionpay") == true -> "UnionPay"
+                    label?.contains("american express") == true -> "American Express"
+                    label?.contains("jcb") == true -> "JCB"
+                    label?.contains("discover") == true -> "Discover"
+                    else -> "Unknown"
+                }
+            }
+        }
+
         return CardInfo(
-            type = emvCard.type?.toString() ?: "Unknown",
+            type = cardType,
             pan = emvCard.cardNumber?.chunked(4)?.joinToString(" ") ?: "Unknown",
             expiry = expiry,
             standard = standard
