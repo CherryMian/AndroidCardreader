@@ -36,6 +36,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -54,6 +55,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Locale
+import android.os.Parcelable
+import kotlinx.parcelize.Parcelize
 
 class MainActivity : ComponentActivity() {
 
@@ -80,6 +83,9 @@ class MainActivity : ComponentActivity() {
                 EmvReaderScreen(
                     state = uiState,
                     onCopy = { text -> copyText(text) },
+                    onViewTransactions = { transactions ->
+                        TransactionViewerActivity.start(this, transactions)
+                    },
                     modifier = Modifier.fillMaxSize()
                 )
             }
@@ -132,7 +138,7 @@ class MainActivity : ComponentActivity() {
                     onFailure = {
                         Log.e(logTag, "Read failed", it)
                         val errorMsg = if (it.message?.contains("Tag was lost", ignoreCase = true) == true) {
-                            "请不要移动的太快"
+                            "请将卡片放置在NFC区域至少2-3秒！"
                         } else {
                             it.message ?: "读取失败"
                         }
@@ -152,7 +158,8 @@ class MainActivity : ComponentActivity() {
     private fun readCard(tag: Tag): CardInfo {
         Log.d(logTag, "Starting readCard with TapCard library")
         val reader = io.github.tapcard.android.NFCCardReader(this)
-        val intent = android.content.Intent().apply { putExtra(NfcAdapter.EXTRA_TAG, tag) }
+        val intent = android.content.Intent()
+        intent.putExtra(NfcAdapter.EXTRA_TAG, tag)
 
         // library call
         val emvCard = reader.readCardBlocking(intent)
@@ -181,25 +188,48 @@ class MainActivity : ComponentActivity() {
         val cardType = if (aid == "A0000000108888") {
             "Mastercard China"
         } else {
-            emvCard.type?.toString() ?: run {
-                val label = emvCard.applicationLabel?.lowercase(java.util.Locale.US)
-                when {
-                    label?.contains("mastercard") == true -> "MasterCard"
-                    label?.contains("visa") == true -> "Visa"
-                    label?.contains("unionpay") == true -> "UnionPay"
-                    label?.contains("american express") == true -> "American Express"
-                    label?.contains("jcb") == true -> "JCB"
-                    label?.contains("discover") == true -> "Discover"
-                    else -> "Unknown"
+            val label = emvCard.applicationLabel
+            if (!label.isNullOrBlank()) {
+                if (label.trim().equals("PBOC DEBIT", ignoreCase = true)) {
+                    "UNIONPAY PBOC DEBIT"
+                } else {
+                    label
                 }
+            } else {
+                emvCard.type?.toString() ?: "Unknown"
             }
         }
+
+        val transactions = emvCard.listTransactions?.map { tx ->
+            CardTransaction(
+                date = tx.date?.let { java.text.SimpleDateFormat("yyyy/MM/dd", Locale.US).format(it) } ?: "Unknown",
+                time = tx.time?.let { java.text.SimpleDateFormat("HH:mm:ss", Locale.US).format(it) } ?: "",
+                amount = String.format(Locale.US, "%.2f", tx.amount ?: 0f),
+                currency = tx.currency?.toString() ?: "",
+                type = tx.transactionType?.toString() ?: "Unknown"
+            )
+        }?.takeIf { it.isNotEmpty() } ?: run {
+             // If TapCard failed to find transactions, try NativeEmvReader
+             Log.d(logTag, "TapCard found no transactions, trying NativeReader")
+             val isoDep = android.nfc.tech.IsoDep.get(tag)
+             if (isoDep != null) {
+                 NativeEmvReader(isoDep).readTransactions()
+             } else {
+                 emptyList()
+             }
+        } ?: emptyList()
 
         return CardInfo(
             type = cardType,
             pan = emvCard.cardNumber?.chunked(4)?.joinToString(" ") ?: "Unknown",
             expiry = expiry,
-            standard = standard
+            standard = standard,
+            transactions = transactions,
+            aid = aid,
+            applicationLabel = emvCard.applicationLabel ?: "",
+            cardHolder = "${emvCard.holderFirstname ?: ""} ${emvCard.holderLastname ?: ""}".trim(),
+            leftPinTry = emvCard.leftPinTry?.toString() ?: "",
+            atrDescription = (emvCard.atrDescription ?: "") as String
         )
     }
 
@@ -212,13 +242,14 @@ sealed interface CardUiState {
     data class Error(val message: String) : CardUiState
 }
 
-data class CardInfo(val type: String, val pan: String, val expiry: String, val standard: String)
+
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EmvReaderScreen(
     state: CardUiState,
     onCopy: (String) -> Unit,
+    onViewTransactions: (List<CardTransaction>) -> Unit,
     modifier: Modifier = Modifier
 ) {
     Scaffold(
@@ -247,7 +278,7 @@ fun EmvReaderScreen(
                 CardUiState.Idle -> IdleCard()
                 CardUiState.Reading -> ReadingCard()
                 is CardUiState.Error -> ErrorCard(state.message)
-                is CardUiState.Success -> ResultCard(state.card, onCopy)
+                is CardUiState.Success -> ResultCard(state.card, onCopy, onViewTransactions)
             }
             Spacer(modifier = Modifier.weight(1f))
             Text(
@@ -305,59 +336,97 @@ private fun ErrorCard(message: String) {
 }
 
 @Composable
-private fun ResultCard(card: CardInfo, onCopy: (String) -> Unit) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
-    ) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(text = "卡片信息", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer)
+private fun ResultCard(card: CardInfo, onCopy: (String) -> Unit, onViewTransactions: (List<CardTransaction>) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(text = "卡片信息", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer)
 
-            Text(text = "Standard", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f))
-            Text(
-                text = card.standard,
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onPrimaryContainer
-            )
+                Text(text = "Standard", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f))
+                Text(
+                    text = card.standard,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                )
 
-            Text(text = "Card Type", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f))
-            Text(
-                text = card.type,
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onPrimaryContainer
-            )
+                Text(text = "Card Type", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f))
+                Text(
+                    text = card.type,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                )
 
-            Text(text = "Card No.", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f))
-            Text(
-                text = card.pan,
-                style = MaterialTheme.typography.headlineSmall,
-                color = MaterialTheme.colorScheme.onPrimaryContainer,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.clickable { onCopy(card.pan) }
-            )
-            Text(text = "Good Thru", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f))
-            Text(
-                text = card.expiry,
-                style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.onPrimaryContainer,
-                modifier = Modifier.clickable { onCopy(card.expiry) }
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(onClick = { onCopy(card.pan) }) {
-                    Icon(imageVector = Icons.Filled.ContentCopy, contentDescription = null)
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(text = "复制卡号")
+                Text(text = "Card No.", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f))
+                Text(
+                    text = card.pan,
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.clickable { onCopy(card.pan) }
+                )
+                Text(text = "Good Thru", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f))
+                Text(
+                    text = card.expiry,
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier.clickable { onCopy(card.expiry) }
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = { onCopy(card.pan) }) {
+                        Icon(imageVector = Icons.Filled.ContentCopy, contentDescription = null)
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(text = "复制卡号")
+                    }
+                    TextButton(onClick = { onCopy(card.expiry) }) {
+                        Icon(imageVector = Icons.Filled.ContentCopy, contentDescription = null)
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(text = "复制有效期")
+                    }
                 }
-                TextButton(onClick = { onCopy(card.expiry) }) {
-                    Icon(imageVector = Icons.Filled.ContentCopy, contentDescription = null)
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(text = "复制有效期")
+                Text(text = "点按文字或按钮可复制。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f))
+            }
+        }
+
+        // Hidden transaction viewer entry
+        if (false && card.transactions.isNotEmpty()) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onViewTransactions(card.transactions) },
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
+            ) {
+                Row(
+                   modifier = Modifier
+                       .padding(16.dp)
+                       .fillMaxWidth(),
+                   horizontalArrangement = Arrangement.SpaceBetween,
+                   verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(
+                            text = "查看交易记录",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer
+                        )
+                        Text(
+                            text = "共找到 ${card.transactions.size} 条记录",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f)
+                        )
+                    }
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                        contentDescription = "Go",
+                        tint = MaterialTheme.colorScheme.onSecondaryContainer
+                    )
                 }
             }
-            Text(text = "点按文字或按钮可复制。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f))
         }
     }
 }
@@ -365,13 +434,13 @@ private fun ResultCard(card: CardInfo, onCopy: (String) -> Unit) {
 @Preview(showBackground = true)
 @Composable
 private fun PreviewIdle() {
-    EMVReaderTheme { EmvReaderScreen(CardUiState.Idle, {}) }
+    EMVReaderTheme { EmvReaderScreen(CardUiState.Idle, {}, {}) }
 }
 
 @Preview(showBackground = true)
 @Composable
 private fun PreviewResult() {
     EMVReaderTheme {
-        EmvReaderScreen(CardUiState.Success(CardInfo("Visa", "6214 8888 1234 5678", "2028/12", "EMV")), {})
+        EmvReaderScreen(CardUiState.Success(CardInfo("Visa", "6214 8888 1234 5678", "2028/12", "EMV")), {}, {})
     }
 }

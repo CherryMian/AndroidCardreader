@@ -28,6 +28,12 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <activity
+            android:name=".TransactionViewerActivity"
+            android:label="交易记录"
+            android:exported="false"
+            android:theme="@style/Theme.EMVReader" />
     </application>
 
 </manifest>
