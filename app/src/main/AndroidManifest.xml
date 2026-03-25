@@ -34,6 +34,12 @@
             android:label="交易记录"
             android:exported="false"
             android:theme="@style/Theme.EMVReader" />
+
+        <activity
+            android:name=".ScanHistoryActivity"
+            android:label="扫描记录"
+            android:exported="false"
+            android:theme="@style/Theme.EMVReader" />
     </application>
 
 </manifest>
