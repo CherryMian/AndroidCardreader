@@ -25,7 +25,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Save
@@ -554,7 +553,8 @@ private fun ResultCard(
                 Text(
                     text = card.standard,
                     style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier.clickable { onCopy(card.standard) }
                 )
 
                 if (card.type != "Unknown") {
@@ -562,7 +562,8 @@ private fun ResultCard(
                     Text(
                         text = card.type,
                         style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        modifier = Modifier.clickable { onCopy(card.type) }
                     )
                 }
 
@@ -573,7 +574,7 @@ private fun ResultCard(
                     color = MaterialTheme.colorScheme.onPrimaryContainer,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.clickable { onCopy(card.pan) }
+                    modifier = Modifier.clickable { onCopy(card.pan.replace(" ", "")) }
                 )
                 Text(text = "Good Thru", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f))
                 Text(
@@ -584,16 +585,6 @@ private fun ResultCard(
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Row(horizontalArrangement = Arrangement.Start) {
-                    TextButton(onClick = { onCopy(card.pan) }) {
-                        Icon(imageVector = Icons.Filled.ContentCopy, contentDescription = null)
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(text = "复制卡号")
-                    }
-                    TextButton(onClick = { onCopy(card.expiry) }) {
-                        Icon(imageVector = Icons.Filled.ContentCopy, contentDescription = null)
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(text = "复制有效期")
-                    }
                     if (card.type != "Unknown" && card.pan != "Unknown" && card.expiry != "--/--") {
                         TextButton(onClick = { onSave(card) }) {
                             Icon(imageVector = Icons.Filled.Save, contentDescription = null)
@@ -602,7 +593,7 @@ private fun ResultCard(
                         }
                     }
                 }
-                Text(text = "点按文字或按钮可复制。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f))
+                Text(text = "点按文字即可复制。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f))
             }
         }
 
