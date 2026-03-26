@@ -3,10 +3,13 @@ package com.yumian.emvreader
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
-import androidx.activity.ComponentActivity
+import android.widget.Toast
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.fragment.app.FragmentActivity
 import androidx.biometric.BiometricManager
+import androidx.biometric.BiometricPrompt
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
@@ -21,7 +24,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.yumian.emvreader.ui.theme.EMVReaderTheme
 
-class SettingsActivity : ComponentActivity() {
+class SettingsActivity : FragmentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -48,6 +51,7 @@ class SettingsActivity : ComponentActivity() {
 fun SettingsScreen(onBack: () -> Unit) {
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
     val context = LocalContext.current
+    val activity = context as FragmentActivity
 
     val canAuthenticate = remember {
         val biometricManager = BiometricManager.from(context)
@@ -59,6 +63,38 @@ fun SettingsScreen(onBack: () -> Unit) {
 
     var isBiometricEnabled by remember {
         mutableStateOf(SettingsManager.isBiometricEnabled(context) && canAuthenticate)
+    }
+
+    fun authenticateToDisable() {
+        val executor = ContextCompat.getMainExecutor(context)
+        val biometricPrompt = BiometricPrompt(activity, executor,
+            object : BiometricPrompt.AuthenticationCallback() {
+                override fun onAuthenticationSucceeded(
+                    result: BiometricPrompt.AuthenticationResult
+                ) {
+                    super.onAuthenticationSucceeded(result)
+                    isBiometricEnabled = false
+                    SettingsManager.setBiometricEnabled(context, false)
+                    Toast.makeText(context, "已关闭身份验证，请注意隐私安全!", Toast.LENGTH_SHORT).show()
+                }
+
+                override fun onAuthenticationError(
+                    errorCode: Int, errString: CharSequence
+                ) {
+                    super.onAuthenticationError(errorCode, errString)
+                    Toast.makeText(context, "验证失败: $errString", Toast.LENGTH_SHORT).show()
+                    // Revert switch visually if needed?
+                    // Since isBiometricEnabled was not changed yet, it remains true.
+                    // The switch UI is bound to isBiometricEnabled, so it stays on.
+                }
+            })
+
+        val promptInfo = BiometricPrompt.PromptInfo.Builder()
+            .setTitle("身份验证")
+            .setSubtitle("请验证身份以关闭此功能")
+            .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.DEVICE_CREDENTIAL)
+            .build()
+        biometricPrompt.authenticate(promptInfo)
     }
 
     Scaffold(
@@ -105,17 +141,28 @@ fun SettingsScreen(onBack: () -> Unit) {
                         checked = isBiometricEnabled,
                         onCheckedChange = { checked ->
                             if (canAuthenticate) {
-                                isBiometricEnabled = checked
-                                SettingsManager.setBiometricEnabled(context, checked)
+                                if (!checked) {
+                                    // Turning off -> Authenticate
+                                    authenticateToDisable()
+                                } else {
+                                    // Turning on -> Just do it
+                                    isBiometricEnabled = true
+                                    SettingsManager.setBiometricEnabled(context, true)
+                                }
                             }
                         },
                         enabled = canAuthenticate
                     )
                 },
                 modifier = Modifier.clickable(enabled = canAuthenticate) {
-                    val newValue = !isBiometricEnabled
-                    isBiometricEnabled = newValue
-                    SettingsManager.setBiometricEnabled(context, newValue)
+                    if (isBiometricEnabled) {
+                        // Turning off
+                        authenticateToDisable()
+                    } else {
+                        // Turning on
+                        isBiometricEnabled = true
+                        SettingsManager.setBiometricEnabled(context, true)
+                    }
                 }
             )
             HorizontalDivider()
