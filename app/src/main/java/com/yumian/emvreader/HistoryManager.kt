@@ -1,7 +1,9 @@
 package com.yumian.emvreader
 
 import android.content.Context
-import android.util.Log
+import android.content.SharedPreferences
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKey
 import org.json.JSONArray
 import org.json.JSONObject
 import java.text.SimpleDateFormat
@@ -20,11 +22,57 @@ data class SavedScan(
 )
 
 object HistoryManager {
-    private const val PREF_NAME = "scan_history_prefs"
+    private const val PREF_NAME_LEGACY = "scan_history_prefs"
+    private const val PREF_NAME_SECURE = "scan_history_secure"
     private const val KEY_HISTORY = "history_json"
 
+    private fun getPreferences(context: Context): SharedPreferences {
+        val masterKey = MasterKey.Builder(context)
+            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+            .build()
+
+        return EncryptedSharedPreferences.create(
+            context,
+            PREF_NAME_SECURE,
+            masterKey,
+            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+        )
+    }
+
+    fun hasUnencryptedData(context: Context): Boolean {
+        // Check if legacy file exists and has data
+        val legacyPrefs = context.getSharedPreferences(PREF_NAME_LEGACY, Context.MODE_PRIVATE)
+        return legacyPrefs.contains(KEY_HISTORY) && !legacyPrefs.getString(KEY_HISTORY, "[]").equals("[]")
+    }
+
+    fun migrateToEncrypted(context: Context) {
+        val legacyPrefs = context.getSharedPreferences(PREF_NAME_LEGACY, Context.MODE_PRIVATE)
+        val historyJson = legacyPrefs.getString(KEY_HISTORY, "[]")
+
+        if (!historyJson.isNullOrEmpty() && historyJson != "[]") {
+            val securePrefs = getPreferences(context)
+            // Merge or overwrite? Usually migration implies moving.
+            // If secure already has data, we might append. For now simpler to just write if empty or append.
+            // Let's safe-append.
+
+            val existingSecureJson = securePrefs.getString(KEY_HISTORY, "[]")
+            val existingArray = JSONArray(existingSecureJson)
+            val legacyArray = JSONArray(historyJson)
+
+            for (i in 0 until legacyArray.length()) {
+                existingArray.put(legacyArray.getJSONObject(i))
+            }
+
+            securePrefs.edit().putString(KEY_HISTORY, existingArray.toString()).apply()
+
+            // Clear legacy
+            legacyPrefs.edit().remove(KEY_HISTORY).apply()
+        }
+    }
+
     fun saveScan(context: Context, card: CardInfo, customName: String? = null) {
-        val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+        val prefs = getPreferences(context)
         val historyJson = prefs.getString(KEY_HISTORY, "[]")
         val jsonArray = JSONArray(historyJson)
 
@@ -56,7 +104,7 @@ object HistoryManager {
     }
 
     fun updateScanName(context: Context, timestamp: Long, newName: String) {
-        val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+        val prefs = getPreferences(context)
         val historyJson = prefs.getString(KEY_HISTORY, "[]") ?: "[]"
         val jsonArray = JSONArray(historyJson)
         val newArray = JSONArray()
@@ -72,7 +120,7 @@ object HistoryManager {
     }
 
     fun getHistory(context: Context): List<SavedScan> {
-        val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+        val prefs = getPreferences(context)
         val historyJson = prefs.getString(KEY_HISTORY, "[]") ?: "[]"
         val jsonArray = JSONArray(historyJson)
         val list = mutableListOf<SavedScan>()
@@ -96,8 +144,7 @@ object HistoryManager {
     }
 
     fun clearHistory(context: Context) {
-        val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+        val prefs = getPreferences(context)
         prefs.edit().remove(KEY_HISTORY).apply()
     }
 }
-
