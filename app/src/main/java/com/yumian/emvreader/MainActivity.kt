@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -109,6 +110,9 @@ class MainActivity : FragmentActivity() {
                     },
                     onSettings = {
                         SettingsActivity.start(this)
+                    },
+                    onAccount = {
+                        UserLoginActivity.start(this)
                     },
                     modifier = Modifier.fillMaxSize()
                 )
@@ -292,6 +296,14 @@ class MainActivity : FragmentActivity() {
             } ?: emptyList()
         }
 
+        // Normalize ATR description: the TapCard library sometimes returns a List or other types.
+        val atrDescriptionStr: String = when (val ad = emvCard.atrDescription) {
+            null -> ""
+            is String -> ad
+            is Collection<*> -> ad.joinToString(", ") { it?.toString() ?: "" }
+            else -> ad.toString()
+        }
+
         return CardInfo(
             type = cardType,
             pan = emvCard.cardNumber?.chunked(4)?.joinToString(" ") ?: "Unknown",
@@ -302,7 +314,7 @@ class MainActivity : FragmentActivity() {
             applicationLabel = emvCard.applicationLabel ?: "",
             cardHolder = "${emvCard.holderFirstname ?: ""} ${emvCard.holderLastname ?: ""}".trim(),
             leftPinTry = emvCard.leftPinTry.toString(),
-            atrDescription = (emvCard.atrDescription ?: "") as String
+            atrDescription = atrDescriptionStr
         )
     }
 
@@ -325,6 +337,7 @@ fun EmvReaderScreen(
     onSave: (CardInfo, String?) -> Unit,
     onHistory: () -> Unit,
     onSettings: () -> Unit,
+    onAccount: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val drawerState = rememberDrawerState(DrawerValue.Closed)
@@ -393,6 +406,16 @@ fun EmvReaderScreen(
                         onHistory()
                     },
                     icon = { Icon(Icons.Filled.History, contentDescription = null) },
+                    modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
+                )
+                NavigationDrawerItem(
+                    label = { Text("账户", style = MaterialTheme.typography.titleMedium) },
+                    selected = false,
+                    onClick = {
+                        scope.launch { drawerState.close() }
+                        onAccount()
+                    },
+                    icon = { Icon(Icons.Filled.Person, contentDescription = null) },
                     modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
                 )
                 NavigationDrawerItem(
@@ -604,7 +627,7 @@ private fun ResultCard(
 @Preview(showBackground = true)
 @Composable
 private fun PreviewIdle() {
-    EMVReaderTheme { EmvReaderScreen(CardUiState.Idle, {}, { _, _ -> }, {}, {}) }
+    EMVReaderTheme { EmvReaderScreen(CardUiState.Idle, {}, { _, _ -> }, {}, {}, {}) }
 }
 
 @Preview(showBackground = true)
@@ -612,6 +635,6 @@ private fun PreviewIdle() {
 private fun PreviewResult() {
     EMVReaderTheme {
         EmvReaderScreen(CardUiState.Success(CardInfo("Visa", "6214 8888 1234 5678", "2028/12", "EMV")), {},
-            { _, _ -> }, {}, {})
+            { _, _ -> }, {}, {}, {})
     }
 }
